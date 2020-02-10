@@ -18,7 +18,7 @@
 all: container
 
 TAG?=v1.1.5
-PREFIX?=amazon/aws-alb-ingress-controller
+PREFIX?=peopleperhour/aws-alb-ingress-controller
 ARCH?=amd64
 OS?=linux
 PKG=github.com/kubernetes-sigs/aws-alb-ingress-controller
@@ -26,6 +26,8 @@ REPO_INFO=$(shell git config --get remote.origin.url)
 GO111MODULE=on
 GOPROXY=direct
 GOBIN:=$(shell pwd)/.bin
+CHECKSUM=$(shell cat *.* internal/alb/ls/* | md5sum | cut -c1-8)
+
 
 .EXPORT_ALL_VARIABLES:
 
@@ -43,6 +45,15 @@ container:
 
 push:
 	docker push $(PREFIX):$(TAG)
+	@echo "The CHECKSUM of all files in this folder is ${CHECKSUM}."
+	docker tag ${PREFIX}:$(TAG) ${PREFIX}:${TAG}_${CHECKSUM}
+	docker push ${PREFIX}:${TAG}_${CHECKSUM}
+
+push-test:
+	@echo "The CHECKSUM of all files in this folder is ${CHECKSUM}."
+	@echo "Pushing to Docker Hub..."
+	docker tag ${PREFIX}:$(TAG) ${PREFIX}:${TAG}_${CHECKSUM}
+	docker push ${PREFIX}:${TAG}_${CHECKSUM}
 
 clean:
 	rm -f server

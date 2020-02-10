@@ -128,7 +128,13 @@ func (c *rulesController) getDesiredRules(ctx context.Context, listener *elbv2.L
 			continue
 		}
 
+		seenUnconditionalRedirect := false
+
 		for _, path := range ingressRule.HTTP.Paths {
+			if seenUnconditionalRedirect {
+				// Ignore rules that follow a unconditional redirect, they are moot
+				continue
+			}
 			authCfg, err := c.authModule.NewConfig(ctx, ingress, path.Backend, aws.StringValue(listener.Protocol))
 			if err != nil {
 				return nil, err
@@ -146,6 +152,8 @@ func (c *rulesController) getDesiredRules(ctx context.Context, listener *elbv2.L
 			}
 			if createsRedirectLoop(listener, elbRule) {
 				continue
+			} else if isUnconditionalRedirect(listener, elbRule) {
+				seenUnconditionalRedirect = true
 			}
 			output = append(output, elbRule)
 			nextPriority++
@@ -528,4 +536,54 @@ func createsRedirectLoop(listener *elbv2.Listener, r elbv2.Rule) bool {
 		return true
 	}
 	return false
+}
+
+// isUnconditionalRedirect checks whether specified rule always redirects
+// We consider the rule is a unconditional redirect if
+// 1) Path is /*
+// 2) All other rule conditions are nil (ignoring the Host condition).
+// 3) RedirectConfig is not nil.
+func isUnconditionalRedirect(listener *elbv2.Listener, r elbv2.Rule) bool {
+    for _, action := range r.Actions {
+        rc := action.RedirectConfig
+        if rc == nil {
+            continue
+        }
+
+        var paths []string
+        for _, c := range r.Conditions {
+            switch aws.StringValue(c.Field) {
+            case conditions.FieldPathPattern:
+                paths = append(paths, aws.StringValueSlice(c.PathPatternConfig.Values)...)
+            case conditions.FieldHTTPRequestMethod:
+                return false
+            case conditions.FieldSourceIP:
+                return false
+            case conditions.FieldHTTPHeader:
+                return false
+            case conditions.FieldQueryString:
+                return false
+            }
+        }
+
+        if len(paths) == 0 {
+            return true
+        }
+        if len(paths) != 0 {
+            wildcardPathMatch := false
+            for _, path := range paths {
+                if path == "/*" {
+                    wildcardPathMatch = true
+                    break
+                }
+            }
+            // it won't be unconditional if none of the path conditions are the wildcard
+            if !wildcardPathMatch {
+                return false
+            }
+        }
+
+        return true
+    }
+    return false
 }
